@@ -21,7 +21,7 @@ public static class ConfigurationExtension
 
         var value = configuration.GetValue<T>(key);
 
-        if (value == null)
+        if (value is null)
             throw new NullReferenceException($"Could not retrieve the required configuration key: '{key}' ({typeof(T).Name}). Be sure the key is present in the IConfiguration used.");
 
         return value;

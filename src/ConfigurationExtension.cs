@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Soenneker.Extensions.String;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.Contracts;
 using System.Runtime.CompilerServices;
 
 namespace Soenneker.Extensions.Configuration;
@@ -25,7 +26,7 @@ public static class ConfigurationExtension
     /// This method behaves like <see cref="ConfigurationBinder.GetValue{T}(IConfiguration, string)"/> but enforces strict existence
     /// of the key. It is useful for configuration values that are mandatory at startup.
     /// </remarks>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [Pure, MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static T GetValueStrict<T>(this IConfiguration configuration, string key)
     {
         if (key.IsNullOrWhiteSpace())
@@ -34,7 +35,8 @@ public static class ConfigurationExtension
         var value = configuration.GetValue<T>(key);
 
         if (value is null)
-            throw new NullReferenceException($"Could not retrieve the required configuration key: '{key}' ({typeof(T).Name}). Be sure the key is present in the IConfiguration used.");
+            throw new NullReferenceException(
+                $"Could not retrieve the required configuration key: '{key}' ({typeof(T).Name}). Be sure the key is present in the IConfiguration used.");
 
         return value;
     }
@@ -50,7 +52,7 @@ public static class ConfigurationExtension
     /// <remarks>
     /// This is a convenience wrapper around <see cref="GetValueStrict{T}(IConfiguration, string)"/> for string values.
     /// </remarks>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [Pure, MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static string GetStringStrict(this IConfiguration configuration, string key)
     {
         return configuration.GetValueStrict<string>(key);
@@ -67,7 +69,7 @@ public static class ConfigurationExtension
     /// <remarks>
     /// This behaves like <see cref="ConfigurationBinder.GetValue{T}(IConfiguration, string)"/> but returns null when the key is missing.
     /// </remarks>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [Pure, MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static string? GetString(this IConfiguration configuration, string key)
     {
         return configuration.GetValue<string>(key);

@@ -40,6 +40,6 @@
 
     <ItemGroup>
         <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.1" />
-        <PackageReference Include="Soenneker.Extensions.String" Version="4.0.589" />
+        <PackageReference Include="Soenneker.Extensions.String" Version="4.0.590" />
     </ItemGroup>
 </Project>

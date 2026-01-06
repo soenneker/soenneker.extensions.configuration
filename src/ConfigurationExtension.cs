@@ -72,6 +72,9 @@ public static class ConfigurationExtension
     [Pure, MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static string? GetString(this IConfiguration configuration, string key)
     {
+        if (key.IsNullOrWhiteSpace())
+            throw new ArgumentNullException(nameof(key), $"The configuration key: '{key}' is invalid; it cannot be null or whitespace.");
+
         return configuration.GetValue<string>(key);
     }
 

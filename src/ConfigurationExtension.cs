@@ -32,13 +32,34 @@ public static class ConfigurationExtension
         if (key.IsNullOrWhiteSpace())
             throw new ArgumentNullException(nameof(key), $"The configuration key: '{key}' is invalid; it cannot be null or whitespace.");
 
-        var value = configuration.GetValue<T>(key);
+        // 🔥 Fast path for string (no binder, no boxing, no conversion)
+        if (typeof(T) == typeof(string))
+        {
+            string? value = configuration[key];
 
-        if (value is null)
+            if (value is null)
+                throw new NullReferenceException(
+                    $"Could not retrieve the required configuration key: '{key}' (String). Be sure the key is present in the IConfiguration used.");
+
+            return (T)(object)value;
+        }
+
+        // Cheap existence check before invoking binder
+        if (!configuration.GetSection(key)
+                          .Exists())
+        {
+            throw new NullReferenceException(
+                $"Could not retrieve the required configuration key: '{key}' ({typeof(T).Name}). Be sure the key is present in the IConfiguration used.");
+        }
+
+        var valueTyped = configuration.GetValue<T>(key);
+
+        // Only meaningful for reference / nullable value types
+        if (valueTyped is null)
             throw new NullReferenceException(
                 $"Could not retrieve the required configuration key: '{key}' ({typeof(T).Name}). Be sure the key is present in the IConfiguration used.");
 
-        return value;
+        return valueTyped;
     }
 
     /// <summary>
@@ -75,7 +96,8 @@ public static class ConfigurationExtension
         if (key.IsNullOrWhiteSpace())
             throw new ArgumentNullException(nameof(key), $"The configuration key: '{key}' is invalid; it cannot be null or whitespace.");
 
-        return configuration.GetValue<string>(key);
+        // Avoid binder for string
+        return configuration[key];
     }
 
     /// <summary>
@@ -88,34 +110,41 @@ public static class ConfigurationExtension
     /// It iterates through all non-null configuration values, orders them alphabetically by key,
     /// and logs them using the <c>Debug</c> level for easier startup diagnostics.
     /// </remarks>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     public static void LogAll(this IConfiguration configuration, ILogger logger)
     {
-        if (!configuration.GetValue<bool>("Log:StartupConfiguration"))
+        // Avoid binder for bool; treat invalid/missing as false (same effective behavior as GetValue<bool> default false).
+        string? flag = configuration["Log:StartupConfiguration"];
+        if (flag is null)
+            return;
+
+        bool enabled = flag.Length == 1 ? flag[0] == '1' : bool.TryParse(flag, out bool b) && b;
+
+        if (!enabled)
             return;
 
         if (!logger.IsEnabled(LogLevel.Debug))
             return;
 
-        // Gather values
-        var list = new List<KeyValuePair<string, string?>>(128);
+        // Gather values (store non-null value as string to avoid nullable checks later)
+        var list = new List<(string Key, string Value)>(128);
 
-        foreach (KeyValuePair<string, string?> kvp in configuration.AsEnumerable())
+        foreach ((string key, string? value) in configuration.AsEnumerable())
         {
-            if (kvp.Value is not null)
-                list.Add(kvp);
+            if (value is not null)
+                list.Add((Key: key, value: value));
         }
 
         if (list.Count == 0)
             return;
 
-        // Sort by key for predictable output
-        list.Sort(static (a, b) => StringComparer.Ordinal.Compare(a.Key, b.Key));
+        list.Sort(static (a, b) => string.Compare(a.Key, b.Key, StringComparison.Ordinal));
 
         logger.LogDebug("----- Start of effective IConfiguration -----");
 
         for (int i = 0; i < list.Count; i++)
         {
-            KeyValuePair<string, string?> item = list[i];
+            (string Key, string Value) item = list[i];
             logger.LogDebug("{key}={value}", item.Key, item.Value);
         }
 

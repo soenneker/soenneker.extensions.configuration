@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Logging;
 using Soenneker.Extensions.String;
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics.Contracts;
 using System.Runtime.CompilerServices;
@@ -13,6 +14,20 @@ namespace Soenneker.Extensions.Configuration;
 /// </summary>
 public static class ConfigurationExtension
 {
+    private static readonly SearchValues<char> _keySeparators = SearchValues.Create(":_-.");
+
+    private static readonly string[] _sensitiveKeyFragments =
+    [
+        "password", "passwd", "secret", "token", "api-key", "apikey", "access-key", "accesskey", "account-key", "accountkey", "private-key",
+        "privatekey", "signing-key", "signingkey", "encryption-key", "encryptionkey", "connection-string", "connectionstring", "credential",
+        "authorization", "shared-access", "sharedaccess", "sas-token", "sastoken", "sas-key", "saskey", "AzureWebJobsStorage"
+    ];
+
+    private static readonly string[] _sensitiveValueFragments =
+    [
+        "password=", "passwd=", "clientsecret=", "accountkey=", "sharedaccesssignature=", "apikey=", "api-key=", "-----BEGIN PRIVATE KEY-----"
+    ];
+
     /// <summary>
     /// Retrieves a strongly-typed configuration value for the specified key, and throws if the key is missing or the value is null.
     /// </summary>
@@ -44,9 +59,10 @@ public static class ConfigurationExtension
             return (T)(object)value;
         }
 
-        // Cheap existence check before invoking binder
-        if (!configuration.GetSection(key)
-                          .Exists())
+        IConfigurationSection section = configuration.GetSection(key);
+
+        // GetValue<T> returns default(T) for a section that has children but no scalar value.
+        if (section.Value is null)
         {
             throw new NullReferenceException(
                 $"Could not retrieve the required configuration key: '{key}' ({typeof(T).Name}). Be sure the key is present in the IConfiguration used.");
@@ -101,17 +117,30 @@ public static class ConfigurationExtension
     }
 
     /// <summary>
-    /// Logs all effective key-value pairs from the current <see cref="IConfiguration"/> instance.
+    /// Logs effective configuration keys and values, redacting common secret-bearing entries.
     /// </summary>
     /// <param name="configuration">The configuration instance to enumerate and log.</param>
     /// <param name="logger">The <see cref="ILogger"/> used to output the configuration values.</param>
     /// <remarks>
     /// This method logs only when the configuration key <c>Log:StartupConfiguration</c> is set to <c>true</c>.
     /// It iterates through all non-null configuration values, orders them alphabetically by key,
-    /// and logs them using the <c>Debug</c> level for easier startup diagnostics.
+    /// and logs them using the <c>Debug</c> level for easier startup diagnostics. Values for common secret-bearing keys are redacted,
+    /// line breaks are escaped, and long values are truncated.
     /// </remarks>
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     public static void LogAll(this IConfiguration configuration, ILogger logger)
+    {
+        LogAll(configuration, logger, null);
+    }
+
+    /// <summary>
+    /// Logs effective configuration keys and values with built-in and caller-supplied redaction.
+    /// </summary>
+    /// <param name="configuration">The configuration instance to enumerate and log.</param>
+    /// <param name="logger">The logger used to output configuration values at Debug level.</param>
+    /// <param name="shouldRedact">An optional predicate that returns <see langword="true"/> for additional keys whose values must be redacted.</param>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    public static void LogAll(this IConfiguration configuration, ILogger logger, Func<string, bool>? shouldRedact)
     {
         // Avoid binder for bool; treat invalid/missing as false (same effective behavior as GetValue<bool> default false).
         string? flag = configuration["Log:StartupConfiguration"];
@@ -132,7 +161,7 @@ public static class ConfigurationExtension
         foreach ((string key, string? value) in configuration.AsEnumerable())
         {
             if (value is not null)
-                list.Add((Key: key, value: value));
+                list.Add((Key: key, Value: PrepareLoggedValue(key, value, shouldRedact)));
         }
 
         if (list.Count == 0)
@@ -149,5 +178,57 @@ public static class ConfigurationExtension
         }
 
         logger.LogDebug("----- End of effective IConfiguration -----");
+    }
+
+    private static string PrepareLoggedValue(string key, string value, Func<string, bool>? shouldRedact)
+    {
+        if (IsSensitiveKey(key) || IsSensitiveValue(value) || shouldRedact?.Invoke(key) == true)
+            return "[REDACTED]";
+
+        string sanitized = value.Replace("\r", "\\r", StringComparison.Ordinal)
+                                .Replace("\n", "\\n", StringComparison.Ordinal);
+
+        const int maxLength = 512;
+        return sanitized.Length <= maxLength ? sanitized : sanitized[..maxLength] + "…";
+    }
+
+    private static bool IsSensitiveKey(string key)
+    {
+        if (ContainsAny(key, _sensitiveKeyFragments))
+            return true;
+
+        ReadOnlySpan<char> remaining = key.AsSpan();
+        while (!remaining.IsEmpty)
+        {
+            int separator = remaining.IndexOfAny(_keySeparators);
+            ReadOnlySpan<char> segment = separator < 0 ? remaining : remaining[..separator];
+
+            if (segment.Equals("key", StringComparison.OrdinalIgnoreCase) || segment.Equals("pwd", StringComparison.OrdinalIgnoreCase) ||
+                segment.Equals("dsn", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (separator < 0)
+                break;
+
+            remaining = remaining[(separator + 1)..];
+        }
+
+        return false;
+    }
+
+    private static bool IsSensitiveValue(string value)
+    {
+        return ContainsAny(value, _sensitiveValueFragments);
+    }
+
+    private static bool ContainsAny(string value, string[] fragments)
+    {
+        for (var i = 0; i < fragments.Length; i++)
+        {
+            if (value.Contains(fragments[i], StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 }

@@ -16,17 +16,17 @@ public static class ConfigurationExtension
 {
     private static readonly SearchValues<char> _keySeparators = SearchValues.Create(":_-.");
 
-    private static readonly string[] _sensitiveKeyFragments =
+    private static readonly SearchValues<string> _sensitiveKeyFragments = SearchValues.Create(
     [
         "password", "passwd", "secret", "token", "api-key", "apikey", "access-key", "accesskey", "account-key", "accountkey", "private-key",
         "privatekey", "signing-key", "signingkey", "encryption-key", "encryptionkey", "connection-string", "connectionstring", "credential",
         "authorization", "shared-access", "sharedaccess", "sas-token", "sastoken", "sas-key", "saskey", "AzureWebJobsStorage"
-    ];
+    ], StringComparison.OrdinalIgnoreCase);
 
-    private static readonly string[] _sensitiveValueFragments =
+    private static readonly SearchValues<string> _sensitiveValueFragments = SearchValues.Create(
     [
         "password=", "passwd=", "clientsecret=", "accountkey=", "sharedaccesssignature=", "apikey=", "api-key=", "-----BEGIN PRIVATE KEY-----"
-    ];
+    ], StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Retrieves a strongly-typed configuration value for the specified key, and throws if the key is missing or the value is null.
@@ -194,7 +194,7 @@ public static class ConfigurationExtension
 
     private static bool IsSensitiveKey(string key)
     {
-        if (ContainsAny(key, _sensitiveKeyFragments))
+        if (key.AsSpan().ContainsAny(_sensitiveKeyFragments))
             return true;
 
         ReadOnlySpan<char> remaining = key.AsSpan();
@@ -218,17 +218,7 @@ public static class ConfigurationExtension
 
     private static bool IsSensitiveValue(string value)
     {
-        return ContainsAny(value, _sensitiveValueFragments);
+        return value.AsSpan().ContainsAny(_sensitiveValueFragments);
     }
 
-    private static bool ContainsAny(string value, string[] fragments)
-    {
-        for (var i = 0; i < fragments.Length; i++)
-        {
-            if (value.Contains(fragments[i], StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-
-        return false;
-    }
 }

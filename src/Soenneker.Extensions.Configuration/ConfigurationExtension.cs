@@ -1,10 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
-using Soenneker.Extensions.String;
+using System.ComponentModel;
+using System.Globalization;
 using System;
-using System.Buffers;
-using System.Collections.Generic;
 using System.Diagnostics.Contracts;
 using System.Runtime.CompilerServices;
 
@@ -13,22 +11,8 @@ namespace Soenneker.Extensions.Configuration;
 /// <summary>
 /// A collection of helpful <see cref="IConfiguration"/> extension methods.
 /// </summary>
-public static class ConfigurationExtension
+public static partial class ConfigurationExtension
 {
-    private static readonly SearchValues<char> _keySeparators = SearchValues.Create(":_-.");
-
-    private static readonly SearchValues<string> _sensitiveKeyFragments = SearchValues.Create(
-    [
-        "password", "passwd", "secret", "token", "api-key", "apikey", "access-key", "accesskey", "account-key", "accountkey", "private-key",
-        "privatekey", "signing-key", "signingkey", "encryption-key", "encryptionkey", "connection-string", "connectionstring", "credential",
-        "authorization", "shared-access", "sharedaccess", "sas-token", "sastoken", "sas-key", "saskey", "AzureWebJobsStorage"
-    ], StringComparison.OrdinalIgnoreCase);
-
-    private static readonly SearchValues<string> _sensitiveValueFragments = SearchValues.Create(
-    [
-        "password=", "passwd=", "clientsecret=", "accountkey=", "sharedaccesssignature=", "apikey=", "api-key=", "-----BEGIN PRIVATE KEY-----"
-    ], StringComparison.OrdinalIgnoreCase);
-
     /// <summary>
     /// Retrieves a strongly-typed configuration value for the specified key, and throws if the key is missing or the value is null.
     /// </summary>
@@ -46,38 +30,131 @@ public static class ConfigurationExtension
     [RequiresUnreferencedCode("Non-primitive configuration types may have members trimmed. Use GetStringStrict for required string values.")]
     public static T GetValueStrict<T>(this IConfiguration configuration, string key)
     {
-        if (key.IsNullOrWhiteSpace())
-            throw new ArgumentNullException(nameof(key), $"The configuration key: '{key}' is invalid; it cannot be null or whitespace.");
+        if (string.IsNullOrWhiteSpace(key))
+            ThrowInvalidKey(key);
 
-        // 🔥 Fast path for string (no binder, no boxing, no conversion)
-        if (typeof(T) == typeof(string))
-        {
-            string? value = configuration[key];
+        string? value = configuration[key];
+        if (value is null)
+            return ThrowMissingValue<T>(key);
 
-            if (value is null)
-                throw new NullReferenceException(
-                    $"Could not retrieve the required configuration key: '{key}' (String). Be sure the key is present in the IConfiguration used.");
-
+        if (typeof(T) == typeof(string) || typeof(T) == typeof(object))
             return (T)(object)value;
-        }
 
-        IConfigurationSection section = configuration.GetSection(key);
+        return ConvertStrict<T>(configuration, key, value);
+    }
 
-        // GetValue<T> returns default(T) for a section that has children but no scalar value.
-        if (section.Value is null)
+    [RequiresUnreferencedCode("Non-primitive configuration types may have members trimmed.")]
+    private static T ConvertStrict<T>(IConfiguration configuration, string key, string value)
+    {
+        Type type = ConfigurationValueType<T>.EffectiveType;
+        if (type != typeof(T) && value.Length == 0)
+            return ThrowMissingValue<T>(key);
+
+        // Resolve on every call so TypeDescriptor provider changes remain observable.
+        TypeConverter converter = TypeDescriptor.GetConverter(type);
+        // Exact converter checks preserve dynamically registered custom conversion behavior.
+        // The JIT removes unrelated branches and boxing for these value types.
+        if ((typeof(T) == typeof(bool) || typeof(T) == typeof(bool?)) && converter.GetType() == typeof(BooleanConverter) &&
+            bool.TryParse(value, out bool parsedBoolean))
+            return (T)(object)parsedBoolean;
+
+        if ((typeof(T) == typeof(int) || typeof(T) == typeof(int?)) && converter.GetType() == typeof(Int32Converter) &&
+            int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedInt32))
+            return (T)(object)parsedInt32;
+
+        if ((typeof(T) == typeof(long) || typeof(T) == typeof(long?)) && converter.GetType() == typeof(Int64Converter) &&
+            long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsedInt64))
+            return (T)(object)parsedInt64;
+
+        if ((typeof(T) == typeof(uint) || typeof(T) == typeof(uint?)) && converter.GetType() == typeof(UInt32Converter) &&
+            uint.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out uint parsedUInt32))
+            return (T)(object)parsedUInt32;
+
+        if ((typeof(T) == typeof(ulong) || typeof(T) == typeof(ulong?)) && converter.GetType() == typeof(UInt64Converter) &&
+            ulong.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out ulong parsedUInt64))
+            return (T)(object)parsedUInt64;
+
+        if ((typeof(T) == typeof(short) || typeof(T) == typeof(short?)) && converter.GetType() == typeof(Int16Converter) &&
+            short.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out short parsedInt16))
+            return (T)(object)parsedInt16;
+
+        if ((typeof(T) == typeof(ushort) || typeof(T) == typeof(ushort?)) && converter.GetType() == typeof(UInt16Converter) &&
+            ushort.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out ushort parsedUInt16))
+            return (T)(object)parsedUInt16;
+
+        if ((typeof(T) == typeof(byte) || typeof(T) == typeof(byte?)) && converter.GetType() == typeof(ByteConverter) &&
+            byte.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out byte parsedByte))
+            return (T)(object)parsedByte;
+
+        if ((typeof(T) == typeof(sbyte) || typeof(T) == typeof(sbyte?)) && converter.GetType() == typeof(SByteConverter) &&
+            sbyte.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out sbyte parsedSByte))
+            return (T)(object)parsedSByte;
+
+        if ((typeof(T) == typeof(float) || typeof(T) == typeof(float?)) && converter.GetType() == typeof(SingleConverter) &&
+            float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float parsedSingle))
+            return (T)(object)parsedSingle;
+
+        if ((typeof(T) == typeof(double) || typeof(T) == typeof(double?)) && converter.GetType() == typeof(DoubleConverter) &&
+            double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsedDouble))
+            return (T)(object)parsedDouble;
+
+        if ((typeof(T) == typeof(decimal) || typeof(T) == typeof(decimal?)) && converter.GetType() == typeof(DecimalConverter) &&
+            decimal.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out decimal parsedDecimal))
+            return (T)(object)parsedDecimal;
+
+        if ((typeof(T) == typeof(Guid) || typeof(T) == typeof(Guid?)) && converter.GetType() == typeof(GuidConverter) &&
+            Guid.TryParse(value, out Guid parsedGuid))
+            return (T)(object)parsedGuid;
+
+        object? converted;
+        if (converter.CanConvertFrom(typeof(string)))
         {
-            throw new NullReferenceException(
-                $"Could not retrieve the required configuration key: '{key}' ({typeof(T).Name}). Be sure the key is present in the IConfiguration used.");
+            try
+            {
+                converted = converter.ConvertFromInvariantString(value);
+            }
+            catch (Exception exception)
+            {
+                throw ConversionError(configuration, key, value, type, exception);
+            }
+        }
+        else if (type == typeof(byte[]))
+        {
+            try
+            {
+                converted = value.Length == 0 ? Array.Empty<byte>() : Convert.FromBase64String(value);
+            }
+            catch (FormatException exception)
+            {
+                throw ConversionError(configuration, key, value, type, exception);
+            }
+        }
+        else
+        {
+            // Match the binder's behavior for unsupported types, including value types.
+            return default(T) is null ? ThrowMissingValue<T>(key) : (T)(object)null!;
         }
 
-        var valueTyped = configuration.GetValue<T>(key);
+        return converted is null ? ThrowMissingValue<T>(key) : (T)converted;
+    }
 
-        // Only meaningful for reference / nullable value types
-        if (valueTyped is null)
-            throw new NullReferenceException(
-                $"Could not retrieve the required configuration key: '{key}' ({typeof(T).Name}). Be sure the key is present in the IConfiguration used.");
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static InvalidOperationException ConversionError(IConfiguration configuration, string key, string value, Type type, Exception exception)
+    {
+        return new InvalidOperationException($"Failed to convert configuration value '{value}' at '{configuration.GetSection(key).Path}' to type '{type}'.", exception);
+    }
 
-        return valueTyped;
+    [DoesNotReturn, MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ThrowInvalidKey(string key)
+    {
+        throw new ArgumentNullException(nameof(key), $"The configuration key: '{key}' is invalid; it cannot be null or whitespace.");
+    }
+
+    [DoesNotReturn, MethodImpl(MethodImplOptions.NoInlining)]
+    private static T ThrowMissingValue<T>(string key)
+    {
+        throw new NullReferenceException(
+            $"Could not retrieve the required configuration key: '{key}' ({typeof(T).Name}). Be sure the key is present in the IConfiguration used.");
     }
 
     /// <summary>
@@ -94,11 +171,10 @@ public static class ConfigurationExtension
     [Pure, MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static string GetStringStrict(this IConfiguration configuration, string key)
     {
-        if (key.IsNullOrWhiteSpace())
-            throw new ArgumentNullException(nameof(key), $"The configuration key: '{key}' is invalid; it cannot be null or whitespace.");
+        if (string.IsNullOrWhiteSpace(key))
+            ThrowInvalidKey(key);
 
-        return configuration[key] ?? throw new NullReferenceException(
-            $"Could not retrieve the required configuration key: '{key}' (String). Be sure the key is present in the IConfiguration used.");
+        return configuration[key] ?? ThrowMissingValue<string>(key);
     }
 
     /// <summary>
@@ -115,116 +191,11 @@ public static class ConfigurationExtension
     [Pure, MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static string? GetString(this IConfiguration configuration, string key)
     {
-        if (key.IsNullOrWhiteSpace())
-            throw new ArgumentNullException(nameof(key), $"The configuration key: '{key}' is invalid; it cannot be null or whitespace.");
+        if (string.IsNullOrWhiteSpace(key))
+            ThrowInvalidKey(key);
 
         // Avoid binder for string
         return configuration[key];
-    }
-
-    /// <summary>
-    /// Logs effective configuration keys and values, redacting common secret-bearing entries.
-    /// </summary>
-    /// <param name="configuration">The configuration instance to enumerate and log.</param>
-    /// <param name="logger">The <see cref="ILogger"/> used to output the configuration values.</param>
-    /// <remarks>
-    /// This method logs only when the configuration key <c>Log:StartupConfiguration</c> is set to <c>true</c>.
-    /// It iterates through all non-null configuration values, orders them alphabetically by key,
-    /// and logs them using the <c>Debug</c> level for easier startup diagnostics. Values for common secret-bearing keys are redacted,
-    /// line breaks are escaped, and long values are truncated.
-    /// </remarks>
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    public static void LogAll(this IConfiguration configuration, ILogger logger)
-    {
-        LogAll(configuration, logger, null);
-    }
-
-    /// <summary>
-    /// Logs effective configuration keys and values with built-in and caller-supplied redaction.
-    /// </summary>
-    /// <param name="configuration">The configuration instance to enumerate and log.</param>
-    /// <param name="logger">The logger used to output configuration values at Debug level.</param>
-    /// <param name="shouldRedact">An optional predicate that returns <see langword="true"/> for additional keys whose values must be redacted.</param>
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    public static void LogAll(this IConfiguration configuration, ILogger logger, Func<string, bool>? shouldRedact)
-    {
-        // Avoid binder for bool; treat invalid/missing as false (same effective behavior as GetValue<bool> default false).
-        string? flag = configuration["Log:StartupConfiguration"];
-        if (flag is null)
-            return;
-
-        bool enabled = flag.Length == 1 ? flag[0] == '1' : bool.TryParse(flag, out bool b) && b;
-
-        if (!enabled)
-            return;
-
-        if (!logger.IsEnabled(LogLevel.Debug))
-            return;
-
-        // Gather values (store non-null value as string to avoid nullable checks later)
-        var list = new List<(string Key, string Value)>(128);
-
-        foreach ((string key, string? value) in configuration.AsEnumerable())
-        {
-            if (value is not null)
-                list.Add((Key: key, Value: PrepareLoggedValue(key, value, shouldRedact)));
-        }
-
-        if (list.Count == 0)
-            return;
-
-        list.Sort(static (a, b) => string.Compare(a.Key, b.Key, StringComparison.Ordinal));
-
-        logger.LogDebug("----- Start of effective IConfiguration -----");
-
-        for (int i = 0; i < list.Count; i++)
-        {
-            (string Key, string Value) item = list[i];
-            logger.LogDebug("{key}={value}", item.Key, item.Value);
-        }
-
-        logger.LogDebug("----- End of effective IConfiguration -----");
-    }
-
-    private static string PrepareLoggedValue(string key, string value, Func<string, bool>? shouldRedact)
-    {
-        if (IsSensitiveKey(key) || IsSensitiveValue(value) || shouldRedact?.Invoke(key) == true)
-            return "[REDACTED]";
-
-        string sanitized = value.Replace("\r", "\\r", StringComparison.Ordinal)
-                                .Replace("\n", "\\n", StringComparison.Ordinal);
-
-        const int maxLength = 512;
-        return sanitized.Length <= maxLength ? sanitized : sanitized[..maxLength] + "…";
-    }
-
-    private static bool IsSensitiveKey(string key)
-    {
-        if (key.AsSpan().ContainsAny(_sensitiveKeyFragments))
-            return true;
-
-        ReadOnlySpan<char> remaining = key.AsSpan();
-        while (!remaining.IsEmpty)
-        {
-            int separator = remaining.IndexOfAny(_keySeparators);
-            ReadOnlySpan<char> segment = separator < 0 ? remaining : remaining[..separator];
-
-            if (segment.Equals("key", StringComparison.OrdinalIgnoreCase) || segment.Equals("pwd", StringComparison.OrdinalIgnoreCase) ||
-                segment.Equals("dsn", StringComparison.OrdinalIgnoreCase))
-                return true;
-
-            if (separator < 0)
-                break;
-
-            remaining = remaining[(separator + 1)..];
-        }
-
-        return false;
-    }
-
-    private static bool IsSensitiveValue(string value)
-    {
-        return value.AsSpan().ContainsAny(_sensitiveValueFragments);
     }
 
 }

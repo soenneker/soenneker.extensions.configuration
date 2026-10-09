@@ -54,17 +54,4 @@ public class ConfigurationExtensionTests
             throw new InvalidOperationException("Expected redaction or line-break escaping was not applied.");
     }
 
-    private sealed class CapturingLogger : ILogger
-    {
-        public List<string> Messages { get; } = [];
-
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => logLevel == LogLevel.Debug;
-
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-        {
-            Messages.Add(formatter(state, exception));
-        }
-    }
 }

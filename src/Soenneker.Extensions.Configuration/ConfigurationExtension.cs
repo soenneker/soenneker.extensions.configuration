@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Configuration;
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Soenneker.Extensions.String;
 using System;
@@ -42,6 +43,7 @@ public static class ConfigurationExtension
     /// of the key. It is useful for configuration values that are mandatory at startup.
     /// </remarks>
     [Pure, MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [RequiresUnreferencedCode("Non-primitive configuration types may have members trimmed. Use GetStringStrict for required string values.")]
     public static T GetValueStrict<T>(this IConfiguration configuration, string key)
     {
         if (key.IsNullOrWhiteSpace())
@@ -92,7 +94,11 @@ public static class ConfigurationExtension
     [Pure, MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static string GetStringStrict(this IConfiguration configuration, string key)
     {
-        return configuration.GetValueStrict<string>(key);
+        if (key.IsNullOrWhiteSpace())
+            throw new ArgumentNullException(nameof(key), $"The configuration key: '{key}' is invalid; it cannot be null or whitespace.");
+
+        return configuration[key] ?? throw new NullReferenceException(
+            $"Could not retrieve the required configuration key: '{key}' (String). Be sure the key is present in the IConfiguration used.");
     }
 
     /// <summary>
